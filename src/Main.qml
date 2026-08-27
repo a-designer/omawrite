@@ -38,6 +38,10 @@ ApplicationWindow {
     property string pendingAction: ""
     property bool replaceOpen: false
     property bool awaitingPendingSave: false
+    // Preview swaps the source editor for a rendered, read-only view of the
+    // same Markdown. The document stays attached to the editor throughout, so
+    // saving, recovery, and external-change detection keep working.
+    property bool viewMode: false
 
     Material.theme: darkMode ? Material.Dark : Material.Light
     Material.accent: backend.themeAccent
@@ -51,6 +55,28 @@ ApplicationWindow {
         pendingAction = "close";
         if (!unsavedChangesDialog.opened)
             unsavedChangesDialog.open();
+    }
+
+    function toggleViewMode() {
+        if (viewMode) {
+            viewMode = false;
+            editor.forceActiveFocus();
+            return;
+        }
+        if (searchOpen)
+            closeSearch();
+        // Snapshot rather than bind: re-parsing Markdown on every keystroke
+        // would be wasted work while the preview is hidden.
+        preview.text = editor.text;
+        viewMode = true;
+        preview.forceActiveFocus();
+        Qt.callLater(function() {
+            // Land roughly where the writer was in the source.
+            var editorRange = Math.max(1, editorFlick.contentHeight - editorFlick.height);
+            var previewRange = Math.max(0, previewFlick.contentHeight - previewFlick.height);
+            previewFlick.contentY = Math.min(previewRange,
+                                             editorFlick.contentY / editorRange * previewRange);
+        });
     }
 
     function requestOpen(url) {
@@ -146,6 +172,7 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+H"
         context: Qt.ApplicationShortcut
+        enabled: !win.viewMode
         onActivated: {
             searchOpen = true;
             replaceOpen = true;
@@ -157,18 +184,21 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+B"
         context: Qt.WindowShortcut
+        enabled: !win.viewMode
         onActivated: editor.wrapSelection("**", "**")
     }
 
     Shortcut {
         sequence: "Ctrl+I"
         context: Qt.WindowShortcut
+        enabled: !win.viewMode
         onActivated: editor.wrapSelection("*", "*")
     }
 
     Shortcut {
         sequence: "Ctrl+K"
         context: Qt.WindowShortcut
+        enabled: !win.viewMode
         onActivated: editor.insertLink()
     }
 
@@ -229,18 +259,27 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+Z"
         context: Qt.WindowShortcut
+        enabled: !win.viewMode
         onActivated: editor.undo()
     }
 
     Shortcut {
         sequences: ["Ctrl+Shift+Z", "Ctrl+Y"]
         context: Qt.WindowShortcut
+        enabled: !win.viewMode
         onActivated: editor.redo()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+P"
+        context: Qt.ApplicationShortcut
+        onActivated: win.toggleViewMode()
     }
 
     Shortcut {
         sequence: "Ctrl+F"
         context: Qt.ApplicationShortcut
+        enabled: !win.viewMode
         onActivated: {
             searchOpen = true;
             searchField.forceActiveFocus();
@@ -251,7 +290,7 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+G"
         context: Qt.ApplicationShortcut
-        enabled: win.searchOpen
+        enabled: win.searchOpen && !win.viewMode
         onActivated: win.moveSearch(1)
     }
 
@@ -349,7 +388,7 @@ ApplicationWindow {
         standardButtons: Dialog.Close
         anchors.centerIn: parent
         contentItem: Label {
-            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nCtrl+= / Ctrl+-  Zoom In / Out\nCtrl+0  Reset Zoom\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
+            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nCtrl+= / Ctrl+-  Zoom In / Out\nCtrl+0  Reset Zoom\nCtrl+Shift+P  Preview\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
             lineHeight: 1.5
         }
     }
@@ -362,6 +401,7 @@ ApplicationWindow {
             anchors.fill: parent
             anchors.leftMargin: 24
             anchors.rightMargin: 24
+            visible: !win.viewMode
             clip: true
             contentWidth: width
             contentHeight: Math.max(height, editor.y + editor.implicitHeight + 220)
@@ -789,6 +829,8 @@ ApplicationWindow {
                 }
 
                 onTextChanged: {
+                    if (win.viewMode)
+                        preview.text = editor.text;
                     if (win.searchUpdating)
                         return;
                     var contentChanged = backend.editorTextChanged();
@@ -810,6 +852,62 @@ ApplicationWindow {
                 Component.onCompleted: {
                     backend.attachDocument(textDocument);
                     forceActiveFocus();
+                }
+            }
+        }
+
+        Flickable {
+            id: previewFlick
+            anchors.fill: parent
+            anchors.leftMargin: 24
+            anchors.rightMargin: 24
+            visible: win.viewMode
+            clip: true
+            contentWidth: width
+            contentHeight: Math.max(height, preview.y + preview.implicitHeight + 220)
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar {
+                policy: ScrollBar.AsNeeded
+                anchors.bottomMargin: 36
+            }
+
+            TextEdit {
+                id: preview
+                objectName: "markdownPreview"
+                x: Math.round((previewFlick.width - width) / 2)
+                y: editor.y
+                width: win.editorWidth
+                text: ""
+                textFormat: TextEdit.MarkdownText
+                wrapMode: TextEdit.Wrap
+                readOnly: true
+                selectByMouse: true
+                color: win.textColor
+                selectedTextColor: win.strongTextColor
+                selectionColor: win.selectionFill
+                font.family: "iA Writer Mono S"
+                font.pixelSize: win.editorFontPixelSize
+                // Relative image paths resolve next to the open file.
+                baseUrl: backend.fileUrl
+                onLinkActivated: function(link) { backend.openExternalUrl(link) }
+                Keys.onEscapePressed: function(event) {
+                    win.toggleViewMode();
+                    event.accepted = true;
+                }
+
+                HoverHandler {
+                    cursorShape: preview.hoveredLink.length > 0
+                        ? Qt.PointingHandCursor : Qt.IBeamCursor
+                }
+
+                Text {
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    text: "Nothing to preview yet"
+                    visible: preview.text.length === 0
+                    color: win.mutedColor
+                    font.family: preview.font.family
+                    font.pixelSize: preview.font.pixelSize
                 }
             }
         }
@@ -837,6 +935,14 @@ ApplicationWindow {
                 iconColor: win.mutedColor
                 tooltip: "Open"
                 onClicked: backend.openDialog()
+            }
+
+            FooterIconButton {
+                objectName: "previewButton"
+                iconName: "preview"
+                iconColor: win.viewMode ? backend.themeAccent : win.mutedColor
+                tooltip: win.viewMode ? "Edit" : "Preview"
+                onClicked: win.toggleViewMode()
             }
 
             Label {

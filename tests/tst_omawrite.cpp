@@ -218,6 +218,54 @@ private slots:
         QCOMPARE(editor->property("font").value<QFont>().pixelSize(), 15);
     }
 
+    void previewsRenderedMarkdown() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QObject *preview = window->findChild<QObject *>(QStringLiteral("markdownPreview"));
+        QVERIFY(editor);
+        QVERIFY(preview);
+        QCOMPARE(window->property("viewMode").toBool(), false);
+        QCOMPARE(preview->property("visible").toBool(), false);
+
+        editor->setProperty("text", QStringLiteral("# Title\n\nSome *text*."));
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "toggleViewMode"));
+        QCOMPARE(window->property("viewMode").toBool(), true);
+        QCOMPARE(preview->property("visible").toBool(), true);
+        QCOMPARE(editor->property("visible").toBool(), false);
+        // A Markdown TextEdit hands back its source re-serialized (trailing
+        // newlines and all); the rendered plain text has the markup stripped.
+        QCOMPARE(preview->property("text").toString().trimmed(),
+                 QStringLiteral("# Title\n\nSome *text*."));
+        QCOMPARE(preview->property("readOnly").toBool(), true);
+        QString rendered;
+        QVERIFY(QMetaObject::invokeMethod(preview, "getText", Q_RETURN_ARG(QString, rendered),
+                                          Q_ARG(int, 0),
+                                          Q_ARG(int, preview->property("length").toInt())));
+        QVERIFY(rendered.contains(QStringLiteral("Title")));
+        QVERIFY(rendered.contains(QStringLiteral("Some text.")));
+        QVERIFY(!rendered.contains(QLatin1Char('#')));
+        QVERIFY(!rendered.contains(QLatin1Char('*')));
+
+        // Loading a file while previewing refreshes the rendered view.
+        editor->setProperty("text", QStringLiteral("## Replaced"));
+        QCOMPARE(preview->property("text").toString().trimmed(), QStringLiteral("## Replaced"));
+
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "toggleViewMode"));
+        QCOMPARE(window->property("viewMode").toBool(), false);
+        QCOMPARE(editor->property("visible").toBool(), true);
+        QCOMPARE(preview->property("visible").toBool(), false);
+    }
+
     void zoomsTextAndRemembersIt() {
         QSettings().remove(QStringLiteral("view/zoom"));
 
