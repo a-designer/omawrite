@@ -68,6 +68,7 @@ ApplicationWindow {
         // Snapshot rather than bind: re-parsing Markdown on every keystroke
         // would be wasted work while the preview is hidden.
         preview.text = editor.text;
+        backend.stylePreviewDocument(preview.textDocument);
         viewMode = true;
         preview.forceActiveFocus();
         Qt.callLater(function() {
@@ -829,8 +830,10 @@ ApplicationWindow {
                 }
 
                 onTextChanged: {
-                    if (win.viewMode)
+                    if (win.viewMode) {
                         preview.text = editor.text;
+                        backend.stylePreviewDocument(preview.textDocument);
+                    }
                     if (win.searchUpdating)
                         return;
                     var contentChanged = backend.editorTextChanged();

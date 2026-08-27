@@ -4,6 +4,8 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickStyle>
+#include <QQuickTextDocument>
+#include <QTextBlock>
 
 #include "backend.h"
 #include "markdownhighlighter.h"
@@ -255,6 +257,18 @@ private slots:
         QVERIFY(rendered.contains(QStringLiteral("Some text.")));
         QVERIFY(!rendered.contains(QLatin1Char('#')));
         QVERIFY(!rendered.contains(QLatin1Char('*')));
+
+        // The importer leaves blocks unspaced; the preview restyles them with
+        // the editor's line height and paragraph spacing.
+        auto *quickDocument = preview->property("textDocument").value<QQuickTextDocument *>();
+        QVERIFY(quickDocument && quickDocument->textDocument());
+        const QTextBlock heading = quickDocument->textDocument()->begin();
+        const QTextBlock paragraph = heading.next();
+        QCOMPARE(heading.blockFormat().headingLevel(), 1);
+        QVERIFY(heading.blockFormat().bottomMargin() > 0);
+        QCOMPARE(paragraph.blockFormat().headingLevel(), 0);
+        QVERIFY(paragraph.blockFormat().bottomMargin() > 0);
+        QCOMPARE(paragraph.blockFormat().lineHeight(), 140.0);
 
         // Loading a file while previewing refreshes the rendered view.
         editor->setProperty("text", QStringLiteral("## Replaced"));
