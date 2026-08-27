@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFontMetricsF>
 #include <QDesktopServices>
 #include <QGuiApplication>
 #include <QMimeData>
@@ -24,6 +25,9 @@
 #include <QTextBlockFormat>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextList>
+#include <QTextTable>
+#include <QTextTableCell>
 #include <QTextStream>
 #include <QUrl>
 #include <QVariantMap>
@@ -222,6 +226,137 @@ void Backend::attachDocument(QObject *textDocument) {
 
     applyDocumentTypography();
     restoreRecovery();
+}
+
+// Qt's Markdown importer produces blocks with no margins and default line
+// height, so a rendered document reads as one dense column. Give the preview
+// the same rhythm as the editor: the editor's line height on prose, space
+// between paragraphs, room around headings, and visible quote/code blocks.
+void Backend::stylePreviewDocument(QObject *textDocument) {
+    auto *quickDocument = qobject_cast<QQuickTextDocument *>(textDocument);
+    if (!quickDocument || !quickDocument->textDocument())
+        return;
+
+    QTextDocument *document = quickDocument->textDocument();
+    const QFont baseFont = document->defaultFont();
+    const qreal em = baseFont.pixelSize() > 0 ? baseFont.pixelSize()
+                                              : QFontMetricsF(baseFont).height();
+    const QColor codeBackground = m_darkMode ? QColor(QStringLiteral("#232020"))
+                                             : QColor(QStringLiteral("#f1f1f1"));
+    const QColor quoteColor = m_darkMode ? QColor(QStringLiteral("#909191"))
+                                         : QColor(QStringLiteral("#7a7c7f"));
+
+    const bool undoEnabled = document->isUndoRedoEnabled();
+    document->setUndoRedoEnabled(false);
+
+    // Tables first, because tidying them edits the document; the block walk
+    // below then runs over a stable structure.
+    QList<QTextTable *> tables;
+    for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+        QTextTable *table = QTextCursor(block).currentTable();
+        if (table && !tables.contains(table))
+            tables.append(table);
+    }
+    for (QTextTable *table : std::as_const(tables)) {
+        QTextTableFormat tableFormat = table->format();
+        tableFormat.setCellPadding(em * 0.3);
+        tableFormat.setCellSpacing(0);
+        tableFormat.setTopMargin(em * 0.9);
+        tableFormat.setBottomMargin(em * 0.9);
+        table->setFormat(tableFormat);
+
+        // The importer leaves an empty block ahead of the first cell's text
+        // and drops the header weight on it; tidy the header row.
+        const QTextTableCell firstCell = table->cellAt(0, 0);
+        const QTextBlock firstBlock = firstCell.firstCursorPosition().block();
+        if (firstBlock.text().isEmpty() && firstBlock.next().isValid()
+                && table->cellAt(firstBlock.next().position()) == firstCell) {
+            QTextCursor remove(firstBlock);
+            remove.deleteChar();
+        }
+        if (table->rows() > 1) {
+            QTextCharFormat headerText;
+            headerText.setFontWeight(QFont::Bold);
+            for (int column = 0; column < table->columns(); ++column) {
+                const QTextTableCell cell = table->cellAt(0, column);
+                QTextCursor cellCursor = cell.firstCursorPosition();
+                cellCursor.setPosition(cell.lastCursorPosition().position(),
+                                       QTextCursor::KeepAnchor);
+                cellCursor.mergeCharFormat(headerText);
+            }
+        }
+    }
+
+    for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+        const QTextBlockFormat current = block.blockFormat();
+        QTextCursor cursor(block);
+        QTextBlockFormat format;
+
+        const int heading = current.headingLevel();
+        const bool code = current.nonBreakableLines()
+            || current.hasProperty(QTextFormat::BlockCodeFence)
+            || current.hasProperty(QTextFormat::BlockCodeLanguage);
+        const bool quote = current.intProperty(QTextFormat::BlockQuoteLevel) > 0;
+        const bool rule = current.hasProperty(QTextFormat::BlockTrailingHorizontalRulerWidth);
+        QTextList *list = block.textList();
+        const bool inTable = cursor.currentTable() != nullptr;
+        const bool first = block == document->begin();
+
+        if (heading > 0) {
+            format.setLineHeight(120, QTextBlockFormat::ProportionalHeight);
+            format.setTopMargin(first ? 0 : em * (heading == 1 ? 1.4 : 1.1));
+            format.setBottomMargin(em * 0.45);
+        } else if (code) {
+            // Every line of a fenced block is its own QTextBlock: space the
+            // run as a whole, not each line. Qt Quick only paints character
+            // backgrounds (not block ones), so tint the text run itself.
+            const auto isCode = [](const QTextBlock &other) {
+                return other.isValid() && other.blockFormat().nonBreakableLines();
+            };
+            // 100% so the per-line tint bars touch and read as one block.
+            format.setLineHeight(100, QTextBlockFormat::ProportionalHeight);
+            format.setTopMargin(isCode(block.previous()) ? 0 : em * 0.4);
+            format.setBottomMargin(isCode(block.next()) ? 0 : em * 0.9);
+            QTextCharFormat codeText;
+            codeText.setBackground(codeBackground);
+            cursor.select(QTextCursor::BlockUnderCursor);
+            cursor.mergeCharFormat(codeText);
+            cursor = QTextCursor(block);
+        } else if (quote) {
+            format.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);
+            format.setLeftMargin(em * 1.2);
+            format.setBottomMargin(em * 0.8);
+            QTextCharFormat quoteText;
+            quoteText.setForeground(quoteColor);
+            quoteText.setFontItalic(true);
+            cursor.select(QTextCursor::BlockUnderCursor);
+            cursor.mergeCharFormat(quoteText);
+            cursor = QTextCursor(block);
+        } else if (rule) {
+            format.setTopMargin(em * 0.6);
+            format.setBottomMargin(em * 1.0);
+        } else if (list) {
+            format.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);
+            // Tight between items (nested lists included), a paragraph's
+            // worth of space once the whole list ends.
+            const bool lastItem = block.next().textList() == nullptr;
+            format.setBottomMargin(em * (lastItem ? 0.8 : 0.15));
+        } else if (inTable) {
+            // The importer lets the first cell inherit the preceding block's
+            // margins; cells get none of their own, the table carries them.
+            format.setLineHeight(125, QTextBlockFormat::ProportionalHeight);
+            format.setTopMargin(0);
+            format.setBottomMargin(0);
+            format.setLeftMargin(0);
+        } else {
+            format.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);
+            format.setBottomMargin(em * 0.8);
+        }
+
+        cursor.mergeBlockFormat(format);
+    }
+
+    document->setUndoRedoEnabled(undoEnabled);
 }
 
 void Backend::openDialog() {
