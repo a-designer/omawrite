@@ -389,7 +389,17 @@ ApplicationWindow {
         standardButtons: Dialog.Close
         anchors.centerIn: parent
         contentItem: Label {
-            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nCtrl+= / Ctrl+-  Zoom In / Out\nCtrl+0  Reset Zoom\nCtrl+Shift+P  Preview\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
+            // Qt maps Ctrl to Command on macOS and Meta to Control; the
+            // reference should name the keys people actually press.
+            readonly property bool mac: Qt.platform.os === "osx"
+            readonly property string ctrl: mac ? "\u2318" : "Ctrl+"
+            readonly property string shift: mac ? "\u21e7" : "Shift+"
+            readonly property string fullscreen: mac ? "\u2303F" : "F11 / Super+F"
+            text: ctrl + "S  Save\n" + ctrl + shift + "S  Save As\n" + ctrl + "O  Open\n"
+                + ctrl + "N  New Window\n" + ctrl + "F  Find\n" + ctrl + "H  Find and Replace\n"
+                + ctrl + "B  Bold\n" + ctrl + "I  Italic\n" + ctrl + "K  Link\n" + ctrl + "P  Print\n"
+                + ctrl + "= / " + ctrl + "-  Zoom In / Out\n" + ctrl + "0  Reset Zoom\n"
+                + ctrl + shift + "P  Preview\n" + fullscreen + "  Fullscreen\n" + ctrl + "?  Shortcuts"
             lineHeight: 1.5
         }
     }
