@@ -13,5 +13,10 @@ fi
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 "$QMAKE" "$ROOT/tests/tests.pro"
-make -j"$(nproc 2>/dev/null || echo 1)"
-QT_QPA_PLATFORM=offscreen ./tst_omawrite
+make -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)"
+# qmake wraps the test in an app bundle on macOS.
+if [ -x ./tst_omawrite.app/Contents/MacOS/tst_omawrite ]; then
+  QT_QPA_PLATFORM=offscreen ./tst_omawrite.app/Contents/MacOS/tst_omawrite
+else
+  QT_QPA_PLATFORM=offscreen ./tst_omawrite
+fi
