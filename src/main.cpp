@@ -1,7 +1,9 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QApplication>
+#include <QColor>
 #include <QIcon>
+#include <QPalette>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlError>
@@ -23,6 +25,9 @@ int main(int argc, char *argv[]) {
     QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/iAWriterMonoS-Italic.ttf"));
     QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/iAWriterMonoS-Bold.ttf"));
     QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/iAWriterMonoS-BoldItalic.ttf"));
+    // Qt's Markdown renderer asks for the generic "monospace" family for code
+    // spans and blocks; keep those in the writing font in the preview.
+    QFont::insertSubstitution(QStringLiteral("monospace"), QStringLiteral("iA Writer Mono S"));
     app.setOrganizationName(QStringLiteral("Omacom"));
     app.setOrganizationDomain(QStringLiteral("omacom.io"));
 
@@ -33,6 +38,16 @@ int main(int argc, char *argv[]) {
     backend.setDarkMode(systemTheme.darkMode());
     QObject::connect(&systemTheme, &SystemTheme::darkModeChanged, &backend,
                      &Backend::setDarkMode);
+
+    // Rendered Markdown links take their colour from the palette's Link role,
+    // which defaults to a pure blue that is unreadable on the dark page.
+    const auto applyLinkColor = [&app, &backend]() {
+        QPalette palette = app.palette();
+        palette.setColor(QPalette::Link, QColor(backend.themeAccent()));
+        app.setPalette(palette);
+    };
+    applyLinkColor();
+    QObject::connect(&backend, &Backend::themeColorsChanged, &backend, applyLinkColor);
 
     // Carry the desktop's text scale into the default font, so the chrome that
     // inherits it (dialog titles, buttons) grows along with the writing area.
