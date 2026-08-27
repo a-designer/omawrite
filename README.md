@@ -31,6 +31,20 @@ Text follows the desktop text size — `omarchy display text size`, or GNOME's
 `text-scaling-factor` — and re-flows without a restart. The default of 12px leaves
 Omawrite at the size it is designed around; larger and smaller sizes scale from there.
 
+## macOS
+
+Omawrite builds as a native app on macOS with Qt 6 from Homebrew:
+
+```
+brew install qt
+PATH="$(brew --prefix qt)/bin:$PATH" bin/bundle-mac
+open build/Omawrite.app
+```
+
+`bin/bundle-mac` produces a self-contained `Omawrite.app` (Qt bundled by
+`macdeployqt`, ad-hoc signed) that opens `.md` files from Finder. Ctrl in
+the shortcuts above is Command; fullscreen is Control+F.
+
 ## Requirements
 
 - Qt 6: `qt6-base`, `qt6-declarative`, `qt6-quickcontrols2`

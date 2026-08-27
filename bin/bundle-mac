@@ -1,0 +1,88 @@
+#!/usr/bin/env sh
+# Build a self-contained Omawrite.app: Qt frameworks and QML modules copied
+# into the bundle by macdeployqt, then ad-hoc signed so Gatekeeper lets it
+# launch on this machine. Pass -dmg to also produce a disk image.
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+APP="$ROOT/build/Omawrite.app"
+
+"$ROOT/bin/build"
+
+if command -v qmake6 >/dev/null 2>&1; then
+  QT_BIN="$(qmake6 -query QT_INSTALL_BINS)"
+else
+  QT_BIN="$(qmake -query QT_INSTALL_BINS)"
+fi
+
+"$QT_BIN/macdeployqt" "$APP" -qmldir="$ROOT/src" -always-overwrite "$@"
+
+# Qt 6 nests QML submodules under QtQuick/, and macdeployqt copies the whole
+# tree, dragging in 3D, PDF, virtual keyboard, particles, and their
+# frameworks. Drop the modules the app never imports, then keep only what is
+# reachable from the executable, the plugin kinds Qt loads for this app, and
+# the QML plugins still wired into Resources/qml.
+QML="$APP/Contents/Resources/qml"
+PLUGINS="$APP/Contents/PlugIns"
+FRAMEWORKS="$APP/Contents/Frameworks"
+for module in Effects LocalStorage Particles Pdf Scene2D Scene3D Shapes \
+              Timeline VectorImage VirtualKeyboard; do
+  rm -rf "$QML/QtQuick/$module"
+done
+rm -rf "$QML/QtQml/StateMachine"
+
+prune_bundle() {
+  keep="$(mktemp)"
+  queue="$(mktemp)"
+  {
+    find "$APP/Contents/MacOS" -type f
+    for kind in platforms styles imageformats iconengines tls networkinformation generic printsupport; do
+      [ -d "$PLUGINS/$kind" ] && find "$PLUGINS/$kind" -type f -name '*.dylib'
+    done
+    find "$QML" -type l -name '*.dylib' | while IFS= read -r link; do
+      target="$(cd "$(dirname "$link")" && cd "$(dirname "$(readlink "$link")")" 2>/dev/null && pwd -P)/$(basename "$(readlink "$link")")"
+      [ -f "$target" ] && printf '%s\n' "$target"
+    done
+  } | sort -u > "$queue"
+  cat "$queue" > "$keep"
+
+  # Transitive closure over the bundle's frameworks and bare dylibs.
+  while [ -s "$queue" ]; do
+    next="$(mktemp)"
+    while IFS= read -r binary; do
+      otool -L "$binary" 2>/dev/null | tail -n +2 | awk '{print $1}'
+    done < "$queue" | sort -u | while IFS= read -r dependency; do
+      case "$dependency" in
+        */*.framework/*) name="$(printf '%s' "$dependency" | sed 's|.*/\([^/]*\)\.framework/.*|\1|')"
+                         candidate="$FRAMEWORKS/$name.framework/Versions/A/$name" ;;
+        *.dylib)         candidate="$FRAMEWORKS/$(basename "$dependency")" ;;
+        *)               continue ;;
+      esac
+      [ -f "$candidate" ] && ! grep -qxF "$candidate" "$keep" && printf '%s\n' "$candidate"
+    done | sort -u > "$next"
+    cat "$next" >> "$keep"
+    mv "$next" "$queue"
+  done
+
+  for framework in "$FRAMEWORKS"/*.framework; do
+    name="$(basename "$framework" .framework)"
+    grep -qxF "$framework/Versions/A/$name" "$keep" || rm -rf "$framework"
+  done
+  for library in "$FRAMEWORKS"/*.dylib; do
+    [ -e "$library" ] && { grep -qxF "$library" "$keep" || rm -f "$library"; }
+  done
+  find "$PLUGINS" -type f -name '*.dylib' | while IFS= read -r plugin; do
+    grep -qxF "$plugin" "$keep" || rm -f "$plugin"
+  done
+  find "$QML" "$PLUGINS" -type l ! -exec test -e {} \; -delete
+  find "$PLUGINS" "$QML" -type d -empty -delete
+  rm -f "$keep" "$queue"
+}
+prune_bundle
+
+# The frameworks now live in the bundle; drop the Homebrew search path so
+# the app never reaches outside itself, then sign the result.
+install_name_tool -delete_rpath "$(dirname "$QT_BIN")/lib" "$APP/Contents/MacOS/Omawrite" 2>/dev/null || true
+codesign --force --deep --sign - "$APP"
+
+echo "Bundled $APP"
