@@ -1,0 +1,45 @@
+#!/usr/bin/env sh
+# Regenerate macos/omawrite.icns from macos/omawrite-icon.svg. AppKit loads
+# SVG natively, so a few lines of Swift rasterize it with a transparent
+# background; sips scales and iconutil packs. Nothing beyond Xcode's
+# command line tools is needed.
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+SVG="$ROOT/macos/omawrite-icon.svg"
+OUT="$ROOT/macos/omawrite.icns"
+TMP="$(mktemp -d)"
+ICONSET="$TMP/omawrite.iconset"
+MASTER="$TMP/master.png"
+trap 'rm -rf "$TMP"' EXIT
+
+cat > "$TMP/render.swift" <<'SWIFT'
+import AppKit
+let args = CommandLine.arguments
+guard args.count == 4, let size = Int(args[3]),
+      let image = NSImage(contentsOf: URL(fileURLWithPath: args[1])) else {
+    FileHandle.standardError.write("usage: render <svg> <png> <size>\n".data(using: .utf8)!)
+    exit(1)
+}
+let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size,
+                           bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                           colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+NSGraphicsContext.saveGraphicsState()
+NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+image.draw(in: NSRect(x: 0, y: 0, width: size, height: size), from: .zero,
+           operation: .sourceOver, fraction: 1)
+NSGraphicsContext.restoreGraphicsState()
+try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: args[2]))
+SWIFT
+
+swift "$TMP/render.swift" "$SVG" "$MASTER" 1024
+
+mkdir -p "$ICONSET"
+for size in 16 32 128 256 512; do
+  double=$((size * 2))
+  sips -z "$size" "$size" "$MASTER" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
+  sips -z "$double" "$double" "$MASTER" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
+done
+
+iconutil -c icns "$ICONSET" -o "$OUT"
+echo "Wrote $OUT"
