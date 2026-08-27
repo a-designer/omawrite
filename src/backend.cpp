@@ -35,6 +35,9 @@
 
 constexpr qreal typoraLineHeightPercent = 140;
 const QString lastSaveDirectorySetting = QStringLiteral("file/lastSaveDirectory");
+const QString zoomSetting = QStringLiteral("view/zoom");
+// Browser-style zoom: each step is ten percent of the previous size.
+constexpr qreal zoomStep = 1.1;
 
 QString Backend::normalizedLinkUrl(const QString &clipboardText) {
     QString candidate = clipboardText.trimmed();
@@ -91,6 +94,8 @@ Backend::Backend(QObject *parent) : QObject(parent) {
             }
         }
     }
+    m_zoom = qBound(minimumZoom, QSettings().value(zoomSetting, 1.0).toDouble(), maximumZoom);
+
     m_wordCountTimer.setSingleShot(true);
     m_wordCountTimer.setInterval(120);
     connect(&m_wordCountTimer, &QTimer::timeout, this, &Backend::refreshWordCount);
@@ -159,11 +164,36 @@ void Backend::setDarkMode(bool darkMode) {
 }
 
 void Backend::setTextScale(qreal textScale) {
-    if (qFuzzyCompare(m_textScale, textScale))
+    if (qFuzzyCompare(m_systemTextScale, textScale))
         return;
 
-    m_textScale = textScale;
+    m_systemTextScale = textScale;
     emit textScaleChanged();
+}
+
+void Backend::zoomIn() {
+    setZoom(m_zoom * zoomStep);
+}
+
+void Backend::zoomOut() {
+    setZoom(m_zoom / zoomStep);
+}
+
+void Backend::resetZoom() {
+    setZoom(1.0);
+}
+
+void Backend::setZoom(qreal zoom) {
+    // Round to whole percent so repeated in/out steps land back on 100%.
+    zoom = qBound(minimumZoom, qRound(zoom * 100.0) / 100.0, maximumZoom);
+    if (qFuzzyCompare(m_zoom, zoom))
+        return;
+
+    m_zoom = zoom;
+    QSettings().setValue(zoomSetting, m_zoom);
+    emit zoomChanged();
+    emit textScaleChanged();
+    setStatus(QStringLiteral("Zoom %1%").arg(qRound(m_zoom * 100.0)));
 }
 
 void Backend::attachDocument(QObject *textDocument) {

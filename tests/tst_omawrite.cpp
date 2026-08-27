@@ -218,6 +218,40 @@ private slots:
         QCOMPARE(editor->property("font").value<QFont>().pixelSize(), 15);
     }
 
+    void zoomsTextAndRemembersIt() {
+        QSettings().remove(QStringLiteral("view/zoom"));
+
+        Backend backend;
+        backend.setTextScale(16.0 / 12.0);
+        QCOMPARE(backend.zoom(), 1.0);
+        QCOMPARE(backend.textScale(), 16.0 / 12.0);
+
+        QSignalSpy scaleSpy(&backend, &Backend::textScaleChanged);
+        backend.zoomIn();
+        QCOMPARE(backend.zoom(), 1.1);
+        QCOMPARE(backend.textScale(), 16.0 / 12.0 * 1.1);
+        QCOMPARE(scaleSpy.count(), 1);
+        QCOMPARE(backend.status(), QStringLiteral("Zoom 110%"));
+
+        backend.zoomOut();
+        QCOMPARE(backend.zoom(), 1.0);
+
+        for (int i = 0; i < 40; ++i)
+            backend.zoomIn();
+        QCOMPARE(backend.zoom(), Backend::maximumZoom);
+        for (int i = 0; i < 40; ++i)
+            backend.zoomOut();
+        QCOMPARE(backend.zoom(), Backend::minimumZoom);
+
+        backend.zoomIn();
+        Backend nextWindow;
+        QCOMPARE(nextWindow.zoom(), backend.zoom());
+
+        backend.resetZoom();
+        QCOMPARE(backend.zoom(), 1.0);
+        QCOMPARE(Backend().zoom(), 1.0);
+    }
+
     void remembersLastSaveDirectory() {
         QTemporaryDir saveDirectory;
         QVERIFY(saveDirectory.isValid());
