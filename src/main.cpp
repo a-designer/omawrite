@@ -1,6 +1,9 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QApplication>
+#include <QEvent>
+#include <QFileOpenEvent>
+#include <QProcess>
 #include <QColor>
 #include <QIcon>
 #include <QPalette>
@@ -14,6 +17,39 @@
 
 #include "backend.h"
 #include "systemtheme.h"
+
+namespace {
+// macOS delivers Finder opens (double-click, drag to the Dock, "Open With")
+// as events rather than arguments. Take the file into this window if it is
+// still untouched, otherwise give it a window of its own.
+class FileOpenFilter : public QObject {
+public:
+    explicit FileOpenFilter(Backend &backend, QObject *parent)
+        : QObject(parent), m_backend(backend) {}
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if (event->type() != QEvent::FileOpen)
+            return QObject::eventFilter(watched, event);
+
+        const QUrl url = static_cast<QFileOpenEvent *>(event)->url();
+        if (!url.isLocalFile())
+            return true;
+
+        const bool windowInUse = m_backend.modified()
+            || (m_backend.fileUrl().isValid() && !m_backend.fileUrl().isEmpty());
+        if (windowInUse)
+            QProcess::startDetached(QCoreApplication::applicationFilePath(),
+                                    {url.toLocalFile()});
+        else
+            m_backend.open(url);
+        return true;
+    }
+
+private:
+    Backend &m_backend;
+};
+}
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
@@ -86,6 +122,7 @@ int main(int argc, char *argv[]) {
     }
 
     backend.setParentWindow(qobject_cast<QWindow *>(engine.rootObjects().constFirst()));
+    app.installEventFilter(new FileOpenFilter(backend, &app));
 
     const QStringList args = app.arguments();
     if (args.size() > 1 && !backend.modified())
