@@ -24,6 +24,7 @@ class Backend : public QObject {
     Q_PROPERTY(int wordCount READ wordCount NOTIFY wordCountChanged)
     Q_PROPERTY(bool darkMode READ darkMode WRITE setDarkMode NOTIFY darkModeChanged)
     Q_PROPERTY(qreal textScale READ textScale WRITE setTextScale NOTIFY textScaleChanged)
+    Q_PROPERTY(qreal zoom READ zoom NOTIFY zoomChanged)
     Q_PROPERTY(QString themeBackground READ themeBackground NOTIFY themeColorsChanged)
     Q_PROPERTY(QString themeForeground READ themeForeground NOTIFY themeColorsChanged)
     Q_PROPERTY(QString themeAccent READ themeAccent NOTIFY themeColorsChanged)
@@ -43,8 +44,13 @@ public:
     int wordCount() const { return m_wordCount; }
     bool darkMode() const { return m_darkMode; }
     void setDarkMode(bool darkMode);
-    qreal textScale() const { return m_textScale; }
+    // Effective text scale: the desktop's text size multiplied by the user's
+    // zoom. setTextScale() feeds the desktop side; zoomIn/Out/reset the user side.
+    qreal textScale() const { return m_systemTextScale * m_zoom; }
     void setTextScale(qreal textScale);
+    qreal zoom() const { return m_zoom; }
+    static constexpr qreal minimumZoom = 0.5;
+    static constexpr qreal maximumZoom = 3.0;
     QString themeBackground() const { return m_themeBackground; }
     QString themeForeground() const { return m_themeForeground; }
     QString themeAccent() const { return m_themeAccent; }
@@ -66,6 +72,9 @@ public:
     Q_INVOKABLE void keepExternalVersion();
     Q_INVOKABLE void printDocument();
     Q_INVOKABLE void newWindow();
+    Q_INVOKABLE void zoomIn();
+    Q_INVOKABLE void zoomOut();
+    Q_INVOKABLE void resetZoom();
     Q_INVOKABLE QString clipboardUrl() const;
     Q_INVOKABLE QString clipboardText() const;
     Q_INVOKABLE bool editorTextChanged();
@@ -82,6 +91,7 @@ signals:
     void wordCountChanged();
     void darkModeChanged();
     void textScaleChanged();
+    void zoomChanged();
     void themeColorsChanged();
     void closeAfterSave();
     void openDialogRequested();
@@ -110,13 +120,15 @@ private:
     void watchCurrentFile();
     void loadOmarchyTheme();
     void watchOmarchyTheme();
+    void setZoom(qreal zoom);
 
     QUrl m_fileUrl;
     bool m_modified = false;
     QString m_status;
     int m_wordCount = 0;
     bool m_darkMode = true;
-    qreal m_textScale = 1.0;
+    qreal m_systemTextScale = 1.0;
+    qreal m_zoom = 1.0;
     bool m_loading = false;
     bool m_closeAfterSave = false;
     bool m_formattingTypography = false;

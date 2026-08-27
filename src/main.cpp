@@ -45,13 +45,14 @@ int main(int argc, char *argv[]) {
         scaled.setPointSizeF(basePointSize * textScale);
         app.setFont(scaled);
     };
-    applyInterfaceFont(systemTheme.textScale());
-
     backend.setTextScale(systemTheme.textScale());
+    applyInterfaceFont(backend.textScale());
     QObject::connect(&systemTheme, &SystemTheme::textScaleChanged, &backend,
-                     [&backend, applyInterfaceFont](qreal textScale) {
-        applyInterfaceFont(textScale);
-        backend.setTextScale(textScale);
+                     &Backend::setTextScale);
+    // Backend folds the user's zoom (Ctrl+=/-/0) into the effective scale.
+    QObject::connect(&backend, &Backend::textScaleChanged, &backend,
+                     [&backend, applyInterfaceFont]() {
+        applyInterfaceFont(backend.textScale());
     });
 
     QQmlApplicationEngine engine;
